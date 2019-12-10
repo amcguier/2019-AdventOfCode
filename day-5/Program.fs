@@ -14,6 +14,10 @@ type OPT =
   | INPUT
   | OPER of (int -> int -> int)
   | HALT
+  | JTRUE
+  | JFALSE
+  | LESSTHAN
+  | EQUALS
 
 type Instruction = OPT * ParamMode list
 
@@ -59,7 +63,11 @@ let opcode (pos: int) (arr: int []) =
     | (1, prms) when arr.Length > pos + 3 -> (OPER (+), prms) |> Ok
     | (2, prms) when arr.Length > pos + 3 -> (OPER (*), prms) |> Ok
     | (3, prms) when arr.Length > pos + 1 -> (INPUT, prms) |> Ok
-    | (4, prms) when arr.Length > pos + 2 -> (OUTPUT, prms) |> Ok
+    | (4, prms) when arr.Length > pos + 1 -> (OUTPUT, prms) |> Ok
+    | (5, prms) when arr.Length > pos + 2 -> (JTRUE, prms) |> Ok
+    | (6, prms) when arr.Length > pos + 2 -> (JFALSE, prms) |> Ok
+    | (7, prms) when arr.Length > pos + 2 -> (LESSTHAN, prms) |> Ok
+    | (8, prms) when arr.Length > pos + 2 -> (EQUALS, prms) |> Ok
     | (99, prms) -> (HALT, prms) |> Ok
     | (code) -> sprintf "Invalid op code provided: code %A\toriginal: %i" code (arr.[pos]) |> Error
 
@@ -127,6 +135,30 @@ let applyOutput array position modes =
     true
   | _ -> false
 
+let applyJump array position modes operator =
+  let compare = readValue array (position + 1) (modeFrom modes 1)
+  let newInstruction = readValue array (position + 2) (modeFrom modes 2)
+  match (compare,newInstruction) with
+    |(Ok(x),Ok(ptr)) ->
+      if operator x then
+        Ok(ptr)
+      else
+        Ok( position + 3 )
+    | x -> sprintf "Invalid jump setup %A" x |> Error
+
+let applyCompare array position modes operator =
+  let first = readValue array (position + 1) (modeFrom modes 1)
+  let second = readValue array (position + 2) (modeFrom modes 2)
+  let write = getWritePosition array (position + 3) (modeFrom modes 3)
+  match (first,second,write) with
+    | (Ok(x),Ok(y),Ok(pos)) ->
+      if operator first second then
+        array.[pos] <- 1
+      else
+        array.[pos] <- 0
+      true
+    | x -> printfn "invalid compare %A" x; false
+  
 let rec processCodes (position: int) (array: int []) =
   let instruction = (opcode position array)
 //  sprintf "%A" instruction |> outputFile.WriteLineAsync |> ignore
@@ -140,6 +172,22 @@ let rec processCodes (position: int) (array: int []) =
   | Ok(OUTPUT, prms) ->
     if applyOutput array position prms then processCodes (position + 2) array
     else Error("Invalid output instruction specified")
+  | Ok(JTRUE,prms) ->
+      match applyJump array position prms ( (<>) 0) with
+        | Ok(vl) -> processCodes vl array
+        | _ -> Error("Invalid jump instruction")
+  | Ok(JFALSE,prms) ->
+      match applyJump array position prms ( (=) 0) with
+        | Ok(vl) -> processCodes vl array
+        | _ -> Error("Invalid jump instruction")
+  | Ok(LESSTHAN, prms) ->
+      if applyCompare array position prms (<) then
+        processCodes (position + 4) array
+      else Error("Invalid less than provided")
+  | Ok(EQUALS,prms) ->
+      if applyCompare array position prms (=) then
+        processCodes (position + 4) array
+      else Error("Invalid equals provided")              
   | Ok(HALT, _) -> array |> Ok
   | Error(s) -> Error(s)
 
